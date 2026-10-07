@@ -358,18 +358,33 @@ function postTo(url){
   }
   document.body.appendChild(dst); dst.submit();
 }
+let ALL_UNITS = [];
+function snapshotUnits(){
+  const sel = document.getElementById('unit_sel');
+  ALL_UNITS = [...sel.options].map(o=>({value:o.value, text:o.text}));
+}
 function filterUnits(){
   const q = document.getElementById('unit_search').value;
   const sel = document.getElementById('unit_sel');
-  for (const o of sel.options){ o.hidden = q && !o.text.includes(q); }
+  const cur = sel.value;
+  sel.innerHTML = '';
+  let kept = false;
+  for (const o of ALL_UNITS){
+    if (!q || o.text.includes(q)){
+      const el = document.createElement('option');
+      el.value = o.value; el.textContent = o.text;
+      if (o.value === cur){ el.selected = true; kept = true; }
+      sel.appendChild(el);
+    }
+  }
+  if (!kept && sel.options.length > 0) sel.selectedIndex = 0;
+  updTopics();
 }
 function jumpToFirst(){
   const sel = document.getElementById('unit_sel');
-  for (const o of sel.options){
-    if (!o.hidden){ sel.value = o.value; updTopics(); gotoStep('s1'); break; }
-  }
+  if (sel.options.length > 0){ sel.selectedIndex = 0; updTopics(); gotoStep('s1'); }
 }
-document.addEventListener('DOMContentLoaded', updTopics);
+document.addEventListener('DOMContentLoaded', ()=>{ snapshotUnits(); updTopics(); });
 </script>
 </body>
 </html>
