@@ -359,18 +359,26 @@ function postTo(url){
   document.body.appendChild(dst); dst.submit();
 }
 let ALL_UNITS = [];
+function norm(s){
+  s = (s || '').replace(/[Ａ-Ｚａ-ｚ０-９]/g, ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0));
+  s = s.replace(/一/g,'1').replace(/二/g,'2').replace(/三/g,'3');
+  return s;
+}
 function snapshotUnits(){
   const sel = document.getElementById('unit_sel');
-  ALL_UNITS = [...sel.options].map(o=>({value:o.value, text:o.text}));
+  ALL_UNITS = [...sel.options].map(o=>{
+    const tp = (TOPICS[o.value] || []).join(' ');
+    return {value:o.value, text:o.text, idx:norm(o.value+' '+o.text+' '+tp)};
+  });
 }
 function filterUnits(){
-  const q = document.getElementById('unit_search').value;
+  const q = norm(document.getElementById('unit_search').value);
   const sel = document.getElementById('unit_sel');
   const cur = sel.value;
   sel.innerHTML = '';
   let kept = false;
   for (const o of ALL_UNITS){
-    if (!q || o.text.includes(q)){
+    if (!q || o.idx.includes(q)){
       const el = document.createElement('option');
       el.value = o.value; el.textContent = o.text;
       if (o.value === cur){ el.selected = true; kept = true; }
