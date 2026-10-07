@@ -1,0 +1,13 @@
+# ビルド成果物・実行時データ (Git管理外)
+dist/
+build/
+*.spec
+__pycache__/
+*.pyc
+figure_stock/
+problems_db.json
+*.docx
+*.pdf
+*.pptx
+*.zip
+.vscode/
