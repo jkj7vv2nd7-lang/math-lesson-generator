@@ -1019,6 +1019,29 @@ document.getElementById('sh').onchange=e=>{{if(e.target.checked)shuffle(order);i
 </script></div></body></html>""")
 
 
+if os.environ.get("VERCEL"):
+    # Vercelは全リクエストを /api/index/<path> で渡すため、同名ルートを二重登録する
+    _n = [0]
+
+    def _dup():
+        for _r in list(app.url_map.iter_rules()):
+            if _r.rule.startswith("/api/index"):
+                continue
+            _suffix = "" if _r.rule == "/" else _r.rule
+            for _t in {"/api/index" + _suffix} | ({"/api/index/"} if _suffix == "" else set()):
+                _n[0] += 1
+                try:
+                    app.add_url_rule(
+                        _t, endpoint=f"{_r.endpoint}_vx{_n[0]}",
+                        view_func=app.view_functions[_r.endpoint],
+                        methods=sorted(_r.methods - {"HEAD", "OPTIONS"}))
+                except Exception:
+                    pass
+
+    _dup()
+    del _dup, _n
+
+
 if __name__ == "__main__":
     print("--------------------------------------------------")
     print(" MathLessonGenerator (StudyAid超え仕様)")
