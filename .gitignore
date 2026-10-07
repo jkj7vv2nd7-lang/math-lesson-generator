@@ -11,5 +11,7 @@ problems_db.json
 *.pptx
 *.zip
 .vscode/
+test.txt
+index.html
 
 .vercel
