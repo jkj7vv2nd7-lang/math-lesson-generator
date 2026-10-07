@@ -59,13 +59,23 @@ def _register_fonts():
         ok_b = True
     except Exception:
         pass
-    # Windows外では同梱のIPAexゴシックを使う
-    if not ok_r and os.path.isfile(REPO_FONT):
+    # Windows外では同梱のIPAexゴシックを使う (リポジトリ同梱 or pip同梱)
+    if not ok_r:
+        cands = [REPO_FONT]
         try:
-            pdfmetrics.registerFont(TTFont("Kyokasho", REPO_FONT))
-            ok_r = True
+            import japanize_matplotlib as _jm
+            cands.append(os.path.join(os.path.dirname(os.path.abspath(_jm.__file__)),
+                                      "fonts", "ipaexg.ttf"))
         except Exception:
             pass
+        for _fp in cands:
+            if os.path.isfile(_fp):
+                try:
+                    pdfmetrics.registerFont(TTFont("Kyokasho", _fp))
+                    ok_r = True
+                    break
+                except Exception:
+                    continue
     return ok_r
 
 
