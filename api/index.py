@@ -3,7 +3,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app import app as flask_app  # noqa: E402
+from app import app  # noqa: E402  VercelはこのFlaskアプリを公開する
 
 
 class StripPrefix:
@@ -21,4 +21,5 @@ class StripPrefix:
         return self.wsgi(environ, start_response)
 
 
-app = StripPrefix(flask_app.wsgi_app)
+# VercelのFlask検出に掛かるよう Flask実体のまま包む
+app.wsgi_app = StripPrefix(app.wsgi_app)
