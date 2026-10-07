@@ -27,7 +27,7 @@
 ## 🚀 使い方（5分スタート）
 
 ### Web版
-公開URLをブラウザで開くだけです。
+https://suugaku-kyouzai.vercel.app をブラウザで開くだけです。
 
 ### Windows版（Python）
 ```bat
