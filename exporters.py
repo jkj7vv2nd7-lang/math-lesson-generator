@@ -7,6 +7,8 @@ FONT_JP = "UD Digi Kyokasho N-R"
 FONT_JP_BOLD = "UD Digi Kyokasho N-B"
 FONT_TTC_R = r"C:\Windows\Fonts\UDDigiKyokashoN-R.ttc"
 FONT_TTC_B = r"C:\Windows\Fonts\UDDigiKyokashoN-B.ttc"
+# 同梱フォント (Windows外・Vercel用。IPAライセンスで再配布可)
+REPO_FONT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "ipaexg.ttf")
 
 
 def build_pptx(title, problems, test_name=""):
@@ -46,14 +48,25 @@ def build_pptx(title, problems, test_name=""):
 def _register_fonts():
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
+    ok_r = ok_b = False
     try:
         pdfmetrics.registerFont(TTFont("Kyokasho", FONT_TTC_R, subfontIndex=0))
+        ok_r = True
     except Exception:
         pass
     try:
         pdfmetrics.registerFont(TTFont("Kyokasho-B", FONT_TTC_B, subfontIndex=0))
+        ok_b = True
     except Exception:
         pass
+    # Windows外では同梱のIPAexゴシックを使う
+    if not ok_r and os.path.isfile(REPO_FONT):
+        try:
+            pdfmetrics.registerFont(TTFont("Kyokasho", REPO_FONT))
+            ok_r = True
+        except Exception:
+            pass
+    return ok_r
 
 
 def build_pdf(title, problems, meta_line=""):

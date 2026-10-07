@@ -1,0 +1,4 @@
+IPAexゴシック (ipaexg.ttf)
+- IPAフォントライセンス v1.0 に基づき再配布しています。
+- ライセンス本文: https://moji.or.jp/ipafont/ipafl/
+- 用途: Vercel等(Windows外)でのPDF日本語表示用。Windows上ではUDデジタル教科書体を優先します。
