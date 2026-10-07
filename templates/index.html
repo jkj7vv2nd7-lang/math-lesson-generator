@@ -132,8 +132,10 @@ select, input[type=text], input[type=number] { width:100%; padding:8px; border:1
 <aside class="drawer" id="drawer">
 <form action="/preview" method="post" id="mainform">
   <div class="form-group no-print" style="margin-bottom:6px;">
-    <label class="f">単元検索（入力で絞り込み）</label>
-    <input type="text" id="unit_search" placeholder="例：連立・合同・関数" oninput="filterUnits()">
+    <label class="f">単元検索（入力で絞り込み・Enterで先頭に移動）</label>
+    <input type="text" id="unit_search" placeholder="例：連立・合同・関数"
+      oninput="filterUnits()"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();jumpToFirst();}">
   </div>
 
   <details class="step" id="s1" {% if not preview %}open{% endif %}>
@@ -360,6 +362,12 @@ function filterUnits(){
   const q = document.getElementById('unit_search').value;
   const sel = document.getElementById('unit_sel');
   for (const o of sel.options){ o.hidden = q && !o.text.includes(q); }
+}
+function jumpToFirst(){
+  const sel = document.getElementById('unit_sel');
+  for (const o of sel.options){
+    if (!o.hidden){ sel.value = o.value; updTopics(); gotoStep('s1'); break; }
+  }
 }
 document.addEventListener('DOMContentLoaded', updTopics);
 </script>
