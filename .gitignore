@@ -11,3 +11,5 @@ problems_db.json
 *.pptx
 *.zip
 .vscode/
+
+.vercel

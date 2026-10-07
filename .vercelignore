@@ -1,0 +1,9 @@
+dist/
+build/
+*.spec
+__pycache__/
+*.pyc
+figure_stock/
+problems_db.json
+.git/
+.vscode/
