@@ -6,6 +6,10 @@
 <link rel="icon" href="/favicon.ico">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <title>数学教材ジェネレーター</title>
+<script>window.MathJax={tex:{inlineMath:[['\\(','\\)']]}};</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+<style>.texview{font-size:15px;background:#f7fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;margin-top:6px;line-height:1.9}
+.texview .tv-label{font-size:11px;color:#718096;display:block}</style>
 <style>
 :root { --navy:#1a365d; --blue:#3182ce; --bg:#eef2f6; --line:#cbd5e0; }
 * { box-sizing:border-box; }
@@ -292,11 +296,18 @@ select, input[type=text], input[type=number] { width:100%; padding:8px; border:1
     <div class="qcard">
       <div class="qq"><span class="qno">問{{ p.no }}</span> <span class="meta">{{ p.kind or '' }}</span><br>
         <textarea name="q_{{ p.no }}" rows="4">{{ p.q }}</textarea>
-        {% if p.fig_img %}<br><img src="{{ p.fig_img }}" alt="問題の図" style="max-width:220px;border:1px solid #cbd5e0;border-radius:6px">{% endif %}</div>
+        {% if p.fig_img %}<br><img src="{{ p.fig_img }}" alt="問題の図" style="max-width:220px;border:1px solid #cbd5e0;border-radius:6px">{% endif %}
+        {% if p.q_tex %}<div class="texview"><span class="tv-label">数式の組版イメージ（Word出力ではWord数式=OMMLで組版： 分数・√・累乗が構造化されます）</span>{{ p.q_tex }}{% if p.ans_tex %}<br>答え：{{ p.ans_tex }}{% endif %}</div>{% endif %}</div>
       <div class="qa">
         <textarea name="hint_{{ p.no }}" rows="2">{{ p.hint }}</textarea><br>
         <input name="ans_{{ p.no }}" value="{{ p.answer }}"><br>
-        <span class="steps">{{ p.steps|join(' → ') }}</span></div>
+        <span class="steps">{{ p.steps|join(' → ') }}</span><br>
+        <label style="font-size:12px;color:#4a5568">この問題に付ける図（取り込み図ストックから）</label>
+        <select name="fig_{{ p.no }}" style="width:100%;padding:6px;border:1px dashed #a0aec0;border-radius:4px">
+          <option value="">（付けない）</option>
+          {% for f in stock_files %}<option value="{{ f }}">{{ f }}</option>{% endfor %}
+        </select>
+      </div>
     </div>
     {% endfor %}
   </div>
@@ -356,7 +367,7 @@ function postTo(url){
   for (const el of src.elements){ if(!el.name) continue;
     if(el.multiple){ for(const o of el.selectedOptions){ const h=document.createElement('input'); h.type='hidden'; h.name=el.name; h.value=o.value; dst.appendChild(h);} }
     else { const h=document.createElement('input'); h.type='hidden'; h.name=el.name; h.value=el.value; dst.appendChild(h); } }
-  for (const el of document.querySelectorAll("textarea[name^='q_'], textarea[name^='hint_'], input[name^='ans_']")){
+  for (const el of document.querySelectorAll("textarea[name^='q_'], textarea[name^='hint_'], input[name^='ans_'], select[name^='fig_']")){
     const h=document.createElement('input'); h.type='hidden'; h.name=el.name; h.value=el.value; dst.appendChild(h);
   }
   document.body.appendChild(dst); dst.submit();

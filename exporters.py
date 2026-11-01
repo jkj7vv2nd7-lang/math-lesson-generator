@@ -57,6 +57,13 @@ def build_pptx(title, problems, test_name=""):
             p2 = tb.add_paragraph()
             p2.text = line
         _style_pptx_runs(tb, 20)
+        # 問題に指定された取り込み図 (右下に配置)
+        if pb.get("user_fig_path") and os.path.isfile(pb["user_fig_path"]):
+            try:
+                s.shapes.add_picture(pb["user_fig_path"], Inches(9.0), Inches(4.3),
+                                     width=Inches(3.5))
+            except Exception:
+                pass
         # ヒント
         ph = s.shapes.add_textbox(Inches(0.5), Inches(4.6), Inches(12.3), Inches(1)).text_frame
         ph.word_wrap = True
@@ -110,7 +117,8 @@ def _register_fonts():
 
 def build_pdf(title, problems, meta_line=""):
     from reportlab.lib.pagesizes import A4
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image as RLImage
+    from reportlab.lib.utils import ImageReader
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib import colors
     from reportlab.lib.units import mm
@@ -133,6 +141,17 @@ def build_pdf(title, problems, meta_line=""):
         q = esc(pb["q"]).replace("\n", "<br/>")
         story.append(Paragraph(f"問{pb['no']} [{esc(pb.get('kind',''))}]<br/>{q}", st_b))
         story.append(Spacer(1, 2*mm))
+        # 問題に指定された取り込み図を、その問題の位置に差し込む
+        if pb.get("user_fig_path") and os.path.isfile(pb["user_fig_path"]):
+            try:
+                iw, ih = ImageReader(pb["user_fig_path"]).getSize()
+                w = 55 * mm
+                h = w * ih / iw if iw else w
+                h = min(h, 80 * mm)
+                story.append(RLImage(pb["user_fig_path"], width=w, height=h))
+                story.append(Spacer(1, 2*mm))
+            except Exception:
+                pass
         story.append(Paragraph(f"ヒント: {esc(pb.get('hint',''))}", st_b))
         story.append(Spacer(1, 4*mm))
     # ルーブリック
