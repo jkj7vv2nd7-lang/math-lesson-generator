@@ -14,8 +14,10 @@ import os
 import random
 import sys
 import tempfile
+from urllib.parse import quote as _urlquote
 
 from templates import generate_problems, UNIT_META, REN_PATTERNS
+from mathomml import split_segments, omath_xml, math_nodes_xml, mathjax_html
 
 if getattr(sys, "frozen", False):
     # PyInstaller EXE: テンプレートは展開先、保存データはEXE隣に置く
@@ -31,6 +33,39 @@ else:
     TEMPLATE_DIR = os.path.join(BASE, "templates")
 STOCK_DIR = os.path.join(BASE, "figure_stock")
 os.makedirs(STOCK_DIR, exist_ok=True)
+# リポジトリ同梱の図ストック (Vercel では BASE が /tmp になり同梱分が読めないため、
+# コードのある場所の figure_stock も読み取り対象に含める)
+BUNDLED_STOCK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "figure_stock")
+
+
+def _stock_dirs():
+    dirs = [STOCK_DIR]
+    if os.path.abspath(BUNDLED_STOCK_DIR) != os.path.abspath(STOCK_DIR):
+        dirs.append(BUNDLED_STOCK_DIR)
+    return dirs
+
+
+def list_stock_files():
+    """アップロード先 (書込可) と同梱ストック (読取専用) の図ファイル名一覧。"""
+    names = set()
+    for d in _stock_dirs():
+        try:
+            for fn in os.listdir(d):
+                if fn.lower().endswith((".png", ".jpg", ".jpeg")):
+                    names.add(fn)
+        except OSError:
+            pass
+    return sorted(names)
+
+
+def stock_path(name):
+    """ストック名から実ファイルパスを引く (無ければ None)。"""
+    safe = os.path.basename(str(name))
+    for d in _stock_dirs():
+        p = os.path.join(d, safe)
+        if os.path.isfile(p):
+            return p
+    return None
 
 app = Flask(__name__, template_folder=TEMPLATE_DIR)
 
@@ -70,7 +105,8 @@ def escape_xml(s):
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def add_system_equations(paragraph, eq1_text, eq2_text):
+def add_system_equations(paragraph, eq1_text, eq2_text, size=11):
+    """連立方程式を Word 数式 (OMML) で組む。各式の中身も分数等を構造化する。"""
     try:
         omml_xml = (
             '<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '
@@ -80,14 +116,44 @@ def add_system_equations(paragraph, eq1_text, eq2_text):
             '<m:endChr m:val=""/>'
             '<m:separate m:val="0"/>'
             '</m:dPr><m:e><m:eqArr>'
-            f'<m:e><m:r><m:t>{escape_xml(eq1_text)}</m:t></m:r></m:e>'
-            f'<m:e><m:r><m:t>{escape_xml(eq2_text)}</m:t></m:r></m:e>'
+            f'<m:e>{math_nodes_xml(eq1_text, size=size)}</m:e>'
+            f'<m:e>{math_nodes_xml(eq2_text, size=size)}</m:e>'
             '</m:eqArr></m:e></m:d></m:oMath></m:oMathPara>'
         )
         paragraph._p.append(parse_xml(omml_xml))
     except Exception:
         run = paragraph.add_run("｛ " + eq1_text + " / " + eq2_text)
         set_run_font(run, font_size=11)
+
+
+def add_rich_text(paragraph, text, font_size=10.5, is_italic=False, is_bold=False,
+                  color=None):
+    """文章混じりテキストを段落へ追加する。
+
+    数式らしい部分は OMML (分数・根号・累乗を構造化) で、それ以外は
+    通常の run で追加する。OMML 化に失敗した部分は通常 run に落とす。"""
+    color_hex = str(color) if color is not None else None
+    for is_math, seg in split_segments(text or ""):
+        if not seg:
+            continue
+        if is_math:
+            try:
+                paragraph._p.append(parse_xml(omath_xml(
+                    seg, size=font_size, bold=is_bold, color=color_hex)))
+                continue
+            except Exception:
+                pass
+        run = paragraph.add_run(seg)
+        set_run_font(run, font_size=font_size, is_italic=is_italic,
+                     is_bold=is_bold, color=color)
+
+
+def add_rich_lines(paragraph, text, font_size=10.5, **kw):
+    """改行を含むテキストを、行ごとに add_rich_text で段落へ追加する。"""
+    for i, line in enumerate((text or "").split("\n")):
+        if i > 0:
+            paragraph.add_run().add_break()
+        add_rich_text(paragraph, line, font_size=font_size, **kw)
 
 
 def shade_cell(cell, color="F8F9FA"):
@@ -456,6 +522,19 @@ def apply_edits(problems, form):
     return problems
 
 
+def apply_fig_assignments(problems, form):
+    """プレビュー画面の「この問題に付ける図」(fig_<no>) を problems へ反映する。"""
+    get = form.get if hasattr(form, "get") else lambda k, d="": d
+    for pb in problems:
+        name = get(f"fig_{pb['no']}", "")
+        if isinstance(name, str) and name.strip():
+            path = stock_path(name)
+            if path:
+                pb["user_fig"] = os.path.basename(name.strip())
+                pb["user_fig_path"] = path
+    return problems
+
+
 def _gen_problems(p):
     seed = p.get("seed")
     if p.get("variant") == "B" and seed is not None:
@@ -488,7 +567,7 @@ def blankify_text(s):
 @app.route("/", methods=["GET"])
 def index():
     return render_template("index.html", units=UNIT_META, ren_patterns=REN_PATTERNS,
-                           stock_files=sorted(os.listdir(STOCK_DIR)))
+                           stock_files=list_stock_files())
 
 
 def _find_app_file(name):
@@ -523,8 +602,12 @@ def preview():
     # プレビューでも図が見えるようにする (出力前に図の有無・内容を確認できる)
     for pb in problems:
         pb["fig_img"] = _problem_fig_datauri(pb, p["unit"])
+        # 数式の組版イメージ (MathJax で表示。テキスト欄とは別に表示する)
+        pb["q_tex"] = mathjax_html(pb["q"])
+        pb["ans_tex"] = mathjax_html(pb.get("answer", ""))
+        pb["hint_tex"] = mathjax_html(pb["hint"]) if pb.get("hint") else ""
     return render_template("index.html", units=UNIT_META, ren_patterns=REN_PATTERNS,
-                           stock_files=sorted(os.listdir(STOCK_DIR)),
+                           stock_files=list_stock_files(),
                            preview=True, problems=problems, unit_label=label, **p)
 
 
@@ -608,6 +691,19 @@ def _problem_fig_datauri(pb, unit):
     return None
 
 
+def _attach_user_fig(new_para, pb, width_in=2.2):
+    """問題に指定された取り込み図を、その問題の位置に差し込む。"""
+    path = pb.get("user_fig_path")
+    if not path or not os.path.isfile(path):
+        return
+    try:
+        pr = new_para()
+        set_run_font(pr.add_run(f"【図: {pb.get('user_fig', '')}】"), font_size=9, is_bold=True)
+        new_para().add_run().add_picture(path, width=Inches(width_in))
+    except Exception:
+        pass
+
+
 def _write_question_cell(cell_q, pb, p, font_size_q):
     pq = cell_q.paragraphs[0]
     sec_pre = f"[{pb['sec']}] " if pb.get("sec") else ""
@@ -620,24 +716,23 @@ def _write_question_cell(cell_q, pb, p, font_size_q):
         e1, e2 = pb["eq1"], pb["eq2"]
         if blank:
             e1, e2 = blankify_text(e1), blankify_text(e2)
-        add_system_equations(pq, e1, e2)
+        add_system_equations(pq, e1, e2, size=font_size_q)
     elif p["unit"] == "中1_方程式" and pb.get("eq1") and not pb.get("q_edited"):
         run_pre = pq.add_run("次の方程式を解きなさい。 ")
         set_run_font(run_pre, font_size=font_size_q)
         eq = blankify_text(pb["eq1"]) if blank else pb["eq1"]
-        run_q = pq.add_run(eq)
-        set_run_font(run_q, font_size=font_size_q + 1)
+        add_rich_text(pq, eq, font_size=font_size_q + 1)
     else:
         disp = blankify_text(pb["q"]) if blank else pb["q"]
-        for i, line in enumerate(disp.split("\n")):
-            if i > 0:
-                pq.add_run().add_break()
-            set_run_font(pq.add_run(line), font_size=font_size_q)
+        add_rich_lines(pq, disp, font_size=font_size_q)
     _attach_figures(cell_q.add_paragraph, pb, p)
+    _attach_user_fig(cell_q.add_paragraph, pb)
     if p["support_tag"] in ("calc_step", "visual", "draw_space", "proof_fill") and pb.get("hint"):
         p_hint = cell_q.add_paragraph()
-        set_run_font(p_hint.add_run("※ " + pb["hint"]), font_size=8.5, is_italic=True,
+        set_run_font(p_hint.add_run("※ "), font_size=8.5, is_italic=True,
                      color=RGBColor(0x4A, 0x55, 0x68))
+        add_rich_text(p_hint, pb["hint"], font_size=8.5, is_italic=True,
+                      color=RGBColor(0x4A, 0x55, 0x68))
     # 作図ゆったり枠
     if pb.get("wide_space") or p["support_tag"] == "draw_space":
         ps = cell_q.add_paragraph()
@@ -654,7 +749,7 @@ def _write_answer_cell(cell_a, pb, p):
     elif p.get("print_pattern") == "full":
         # 模範解答用: 解答欄に答え入り
         set_run_font(pa.add_run("【解答】\n"), font_size=10, is_bold=True)
-        set_run_font(pa.add_run(pb.get("answer", "")), font_size=11, is_bold=True)
+        add_rich_text(pa, pb.get("answer", ""), font_size=11, is_bold=True)
     else:
         set_run_font(pa.add_run("【解答欄】\n"), font_size=10, is_bold=True)
     lines = 5 if p["support_tag"] in ("yutori", "draw_space") else 3
@@ -714,14 +809,17 @@ def build_docx(p, problems, unit_label):
             set_run_font(pp.add_run(f"問{pb['no']}  "), font_size=font_size_q, is_bold=True)
             if p["unit"] == "中2_連立方程式" and pb.get("eq1") and not pb.get("q_edited"):
                 set_run_font(pp.add_run("答【　　　　】 "), font_size=font_size_q)
-                add_system_equations(pp, pb["eq1"], pb["eq2"])
+                add_system_equations(pp, pb["eq1"], pb["eq2"], size=font_size_q)
             else:
-                set_run_font(pp.add_run(pb["q"].replace("\n", "　") + "  答【　　　　】"), font_size=font_size_q)
+                add_rich_text(pp, pb["q"].replace("\n", "　"), font_size=font_size_q)
+                set_run_font(pp.add_run("  答【　　　　】"), font_size=font_size_q)
             # パターンAでも図が付くように (従来は図なしだった)
             _attach_figures(doc.add_paragraph, pb, p)
+            _attach_user_fig(doc.add_paragraph, pb)
             if p["support_tag"] != "none" and pb.get("hint"):
                 ph = doc.add_paragraph()
-                set_run_font(ph.add_run("※ " + pb["hint"]), font_size=9, is_italic=True)
+                set_run_font(ph.add_run("※ "), font_size=9, is_italic=True)
+                add_rich_text(ph, pb["hint"], font_size=9, is_italic=True)
     elif p["template_type"] == "pattern_c":
         # 定期テスト型: 左2問領域 + 右端解答集約 (3列テーブル)
         table = doc.add_table(rows=1, cols=3)
@@ -775,11 +873,14 @@ def build_docx(p, problems, unit_label):
             _write_question_cell(row[0], pb, p, font_size_q)
             _write_answer_cell(row[1], pb, p)
 
-    # 取り込み図ストックの添付
+    # 取り込み図ストックの添付 (問題に指定済みの図は、その位置に入っているので二重添付しない)
+    assigned = {pb.get("user_fig") for pb in problems if pb.get("user_fig")}
     for img_name in p["images"]:
         safe = os.path.basename(img_name)
-        full = os.path.join(STOCK_DIR, safe)
-        if os.path.isfile(full):
+        if safe in assigned:
+            continue
+        full = stock_path(safe)
+        if full:
             try:
                 pd = doc.add_paragraph()
                 set_run_font(pd.add_run(f"【参考図: {safe}】"), font_size=10, is_bold=True)
@@ -814,12 +915,15 @@ def build_docx(p, problems, unit_label):
         blank_expl = p.get("print_pattern") in ("expl_blank", "both_blank")
         for pb in problems:
             pp = doc.add_paragraph()
-            ans_txt = "［　　　　　　］" if blank_ans else pb['answer']
-            set_run_font(pp.add_run(f"問{pb['no']} 答え: {ans_txt}"), font_size=10.5, is_bold=True)
+            set_run_font(pp.add_run(f"問{pb['no']} 答え: "), font_size=10.5, is_bold=True)
+            if blank_ans:
+                set_run_font(pp.add_run("［　　　　　　］"), font_size=10.5, is_bold=True)
+            else:
+                add_rich_text(pp, pb['answer'], font_size=10.5, is_bold=True)
             if not blank_expl:
                 for st in pb.get("steps", [])[:8]:
                     ps = doc.add_paragraph(style="List Bullet")
-                    set_run_font(ps.add_run(st), font_size=9.5, color=RGBColor(0x4A, 0x55, 0x68))
+                    add_rich_text(ps, st, font_size=9.5, color=RGBColor(0x4A, 0x55, 0x68))
             else:
                 for _ in range(2):
                     ps = doc.add_paragraph()
@@ -849,7 +953,8 @@ def _save_record(p, problems, label):
                  "difficulty": p["difficulty"], "count": p["count"], "seed": p.get("seed"),
                  "variant": p.get("variant", "A"), "test_name": p.get("test_name", ""),
                  "problems": [{"no": pb["no"], "q": pb["q"], "answer": pb.get("answer", ""),
-                               "kind": pb.get("kind", "")} for pb in problems]})
+                               "kind": pb.get("kind", ""), "fig": pb.get("user_fig", "")}
+                              for pb in problems]})
     except Exception:
         pass
 
@@ -861,6 +966,7 @@ def generate_word():
         p["seed"] = random.randint(1, 99999)
     problems, label = _gen_problems(p)
     problems = apply_edits(problems, request.form)
+    problems = apply_fig_assignments(problems, request.form)
     _save_record(p, problems, label)
     doc = build_docx(p, problems, label)
     buf = io.BytesIO()
@@ -889,6 +995,7 @@ def generate_pdf():
         p["seed"] = random.randint(1, 99999)
     problems, label = _gen_problems(p)
     problems = apply_edits(problems, request.form)
+    problems = apply_fig_assignments(problems, request.form)
     title = f"【{p['test_name']}】 {label} ({DIFF_LABEL[p['difficulty']]}・{len(problems)}問)"
     buf = build_pdf(title, problems, f"{p['fiscal_year']} 年 組 氏名 / 点数")
     return send_file(buf, as_attachment=True, download_name=f"{p['test_name']}_{p['unit']}.pdf",
@@ -903,6 +1010,7 @@ def generate_pptx():
         p["seed"] = random.randint(1, 99999)
     problems, label = _gen_problems(p)
     problems = apply_edits(problems, request.form)
+    problems = apply_fig_assignments(problems, request.form)
     title = f"【{p['test_name']}】 {label} ({DIFF_LABEL[p['difficulty']]})"
     buf = build_pptx(title, problems, p["test_name"])
     return send_file(buf, as_attachment=True, download_name=f"{p['test_name']}_{p['unit']}.pptx",
@@ -919,7 +1027,16 @@ def upload_fig():
         return "png/jpgのみ対応です", 400
     f.save(os.path.join(STOCK_DIR, safe))
     return render_template("index.html", units=UNIT_META, ren_patterns=REN_PATTERNS,
-                           stock_files=sorted(os.listdir(STOCK_DIR)), uploaded=safe)
+                           stock_files=list_stock_files(), uploaded=safe)
+
+
+@app.route("/stock/<path:name>")
+def stock_file(name):
+    """図ストック配信用 (配信カード等から参照する)。"""
+    full = stock_path(name)
+    if not full:
+        return "not found", 404
+    return send_file(full)
 
 
 PAGE_HEAD = """<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
@@ -1039,10 +1156,21 @@ def tablet():
     p = get_params(request.form)
     problems, label = _gen_problems(p)
     problems = apply_edits(problems, request.form)
-    cards = "".join(
-        f"<div style='border:1px solid #cbd5e0;border-radius:8px;padding:12px;margin:10px 0;font-size:18px'>"
-        f"<b>問{pb['no']}</b><br>{_html.escape(pb['q']).replace(chr(10), '<br>')}</div>"
-        for pb in problems)
+    problems = apply_fig_assignments(problems, request.form)
+
+    def _card(pb):
+        extra = ""
+        du = _problem_fig_datauri(pb, p["unit"])
+        if du:
+            extra += f"<div><img src='{du}' style='max-width:280px'></div>"
+        if pb.get("user_fig"):
+            fn = _html.escape(pb["user_fig"], quote=True)
+            extra += (f"<div>【図: {fn}】</div>"
+                      f"<img src='/stock/{_urlquote(pb['user_fig'])}' style='max-width:280px'>")
+        return (f"<div style='border:1px solid #cbd5e0;border-radius:8px;padding:12px;margin:10px 0;font-size:18px'>"
+                f"<b>問{pb['no']}</b><br>{_html.escape(pb['q']).replace(chr(10), '<br>')}{extra}</div>")
+
+    cards = "".join(_card(pb) for pb in problems)
     qr = ""
     try:
         import qrcode, socket
