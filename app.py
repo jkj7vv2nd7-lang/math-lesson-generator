@@ -7,6 +7,7 @@ from docx.enum.section import WD_ORIENT, WD_SECTION
 from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls, qn
 from docx.oxml import OxmlElement
+import html as _html
 import io
 import json
 import os
@@ -110,6 +111,25 @@ def apply_paper(doc, paper, orient, margin="std"):
             section.page_width, section.page_height = Mm(w_mm), Mm(h_mm)
 
 
+def _coef_x(a):
+    """係数つき x の教科書表記: 1→'x', -1→'-x', それ以外→'{a}x'。"""
+    if a == 1:
+        return "x"
+    if a == -1:
+        return "-x"
+    return f"{a}x"
+
+
+def _lin_math(a, b):
+    """ax+b の教科書表記 (符号・0を整える)。"""
+    s = _coef_x(a)
+    if b > 0:
+        s += f" + {b}"
+    elif b < 0:
+        s += f" - {abs(b)}"
+    return s
+
+
 def make_prop_graph(kind, a, b=0):
     """比例(y=ax)・反比例(y=a/x)・2次関数(y=ax²)のグラフPNG。"""
     try:
@@ -126,17 +146,17 @@ def make_prop_graph(kind, a, b=0):
             ax.plot(xs1, a / xs1, linewidth=2)
             ax.plot(xs2, a / xs2, linewidth=2)
             ax.set_xlim(-6, 6); ax.set_ylim(-10, 10)
-            ax.set_title(f"y = {a}/x")
+            ax.set_title(f"$y = \\frac{{{a}}}{{x}}$")
         elif kind == "parabola":
             xs = np.linspace(-5, 5, 400)
             ax.plot(xs, a * xs ** 2, linewidth=2)
             ax.set_xlim(-6, 6); ax.set_ylim(-2, 12)
-            ax.set_title(f"y = {a}x2")
+            ax.set_title(f"$y = {_coef_x(a)}^2$" if a in (1, -1) else f"$y = {a}x^2$")
         else:  # line_origin
             xs = list(range(-6, 7))
             ax.plot(xs, [a * x for x in xs], linewidth=2)
             ax.set_xlim(-6, 6); ax.set_ylim(-10, 10)
-            ax.set_title(f"y = {a}x")
+            ax.set_title(f"$y = {_coef_x(a)}$")
         ax.set_xlabel("x"); ax.set_ylabel("y")
         fd, path = tempfile.mkstemp(suffix=".png")
         os.close(fd)
@@ -162,7 +182,7 @@ def make_graph_image(a, b, seed=0):
         ax.plot(xs, ys, linewidth=2)
         ax.set_xlim(-6, 6); ax.set_ylim(-10, 10)
         ax.set_xlabel("x"); ax.set_ylabel("y")
-        ax.set_title(f"y = {a}x + {b}")
+        ax.set_title(f"$y = {_lin_math(a, b)}$")
         fd, path = tempfile.mkstemp(suffix=".png")
         os.close(fd)
         fig.savefig(path, bbox_inches="tight")
@@ -177,22 +197,37 @@ def make_unit_figure(unit, pb):
     if unit not in ("中3_円", "中3_相似", "中2_箱ひげ図", "中3_三平方", "中2_三角形四角形",
                     "中2_証明", "中1_平面図形", "中1_空間図形", "中1_作図"):
         return None
+    # 問題固有の図データが無い場合は、無関係な図を付けない
+    if unit == "中1_平面図形":
+        fg = pb.get("fig")
+        if not (isinstance(fg, (tuple, list)) and fg and fg[0] == "sector"):
+            return None
+    if unit in ("中2_三角形四角形", "中2_証明"):
+        # 生成器が図データを持たず、汎用の三角形図は問題文と対応しないため付けない
+        return None
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         import matplotlib.patches as patches
         fig, ax = plt.subplots(figsize=(3.0, 2.6), dpi=150)
+        ax.set_prop_cycle(color=["black"])
         ax.set_aspect("equal")
         ax.axis("off")
         if unit == "中3_円":
+            import math as _m
             circ = plt.Circle((0.5, 0.5), 0.35, fill=False, linewidth=2)
             ax.add_patch(circ)
             ax.plot([0.5], [0.5], marker="o", markersize=4)
-            ax.text(0.5, 0.46, "O", fontsize=10)
-            ax.plot([0.5, 0.78], [0.5, 0.68], linewidth=1.5)
-            ax.plot([0.5, 0.78], [0.5, 0.32], linewidth=1.5)
-            ax.text(0.82, 0.5, "A", fontsize=10)
+            ax.text(0.5, 0.44, "O", fontsize=10)
+            # 問題の中心角に合わせて2本の半径を引く
+            fg = pb.get("fig")
+            theta = fg[1] if isinstance(fg, (tuple, list)) and fg and fg[0] == "circle" else 80
+            for sgn, lab in ((-1, "A"), (1, "B")):
+                ang = _m.radians(sgn * theta / 2)
+                ex, ey = 0.5 + 0.35 * _m.cos(ang), 0.5 + 0.35 * _m.sin(ang)
+                ax.plot([0.5, ex], [0.5, ey], linewidth=1.5)
+                ax.text(ex + 0.03, ey, lab, fontsize=10)
         elif unit in ("中3_相似", "中2_三角形四角形", "中2_証明"):
             ax.plot([0.1, 0.4, 0.1, 0.1], [0.1, 0.1, 0.5, 0.1], linewidth=2)
             ax.plot([0.55, 0.95, 0.55, 0.55], [0.1, 0.1, 0.7, 0.1], linewidth=2, linestyle="--")
@@ -218,10 +253,13 @@ def make_unit_figure(unit, pb):
                 ax.plot([0.5, 0.5], [0.5, 0.8], linewidth=1, linestyle=":")
                 ax.text(0.52, 0.65, "r", fontsize=10)
             elif kind3 == "pyramid":
-                ax.plot([0.2, 0.8, 0.8, 0.2, 0.2], [0.2, 0.2, 0.2, 0.2, 0.2], linewidth=2)
-                ax.plot([0.2, 0.5], [0.2, 0.8], linewidth=2)
-                ax.plot([0.8, 0.5], [0.2, 0.8], linewidth=2)
-                ax.plot([0.2, 0.8], [0.2, 0.2], linewidth=1, linestyle=":")
+                # 四角錐: 頂点 + 平行四辺形の底面 (奥の辺は破線)
+                apex = (0.5, 0.82)
+                base = [(0.22, 0.32), (0.68, 0.32), (0.8, 0.16), (0.34, 0.16)]
+                for (x, y) in base:
+                    ax.plot([apex[0], x], [apex[1], y], linewidth=1.5)
+                ax.plot([base[0][0], base[1][0], base[2][0], base[3][0], base[0][0]],
+                        [base[0][1], base[1][1], base[2][1], base[3][1], base[0][1]], linewidth=2)
             else:  # cube wireframe
                 s, back = 0.4, 0.12
                 for ox, oy in [(0.2, 0.25), (0.2 + back, 0.25 + back)]:
@@ -250,10 +288,19 @@ def make_unit_figure(unit, pb):
                 for t, x, y in [("O", 0.25, 0.25), ("A", 0.27, 0.82), ("B", 0.87, 0.28)]:
                     ax.text(x, y, t, fontsize=11)
         elif unit == "中2_箱ひげ図":
-            ax.set_xlim(0, 10)
             ax.axis("on")
-            vals = sorted([1 + (pb["no"] * 7 + i * 13) % 80 / 10 for i in range(9)])
-            ax.boxplot([vals], vert=False, widths=0.4)
+            five = pb.get("five")
+            if five:
+                # 問題文のデータから求めた五数要約そのものを描く (図と答えを一致させる)
+                lo, q1, med, q3, hi = [float(v) for v in five]
+                ax.bxp([{"label": "", "whislo": lo, "q1": q1, "med": med,
+                         "q3": q3, "whishi": hi}], vert=False, showfliers=False)
+                pad = max(1.0, (hi - lo) * 0.1)
+                ax.set_xlim(lo - pad, hi + pad)
+            else:
+                ax.set_xlim(0, 10)
+                vals = sorted([1 + (pb["no"] * 7 + i * 13) % 80 / 10 for i in range(9)])
+                ax.boxplot([vals], vert=False, widths=0.4)
         else:  # 三平方
             ax.plot([0.15, 0.75, 0.15, 0.15], [0.15, 0.15, 0.65, 0.15], linewidth=2)
             sq = patches.Rectangle((0.15, 0.15), 0.1, 0.1, fill=False, linewidth=1.5)
@@ -278,25 +325,29 @@ def make_unit_figure_step2(unit, pb):
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots(figsize=(3.0, 2.6), dpi=150)
+        ax.set_prop_cycle(color=["black"])
         ax.set_aspect("equal")
         ax.axis("off")
         if unit == "中3_相似":
             ax.plot([0.1, 0.4, 0.1, 0.1], [0.1, 0.1, 0.5, 0.1], linewidth=2)
             ax.plot([0.55, 0.95, 0.55, 0.55], [0.1, 0.1, 0.7, 0.1], linewidth=2, linestyle="--")
             ax.plot([0.1, 0.55], [0.3, 0.4], linewidth=1.5, linestyle=":")
-            ax.text(0.3, 0.38, "AUX", fontsize=9)
         elif unit == "中3_円":
+            import math as _m
             circ = plt.Circle((0.5, 0.5), 0.35, fill=False, linewidth=2)
             ax.add_patch(circ)
             ax.plot([0.5], [0.5], marker="o", markersize=4)
-            ax.plot([0.5, 0.78], [0.5, 0.68], linewidth=1.5)
-            ax.plot([0.5, 0.78], [0.5, 0.32], linewidth=1.5)
+            # 図1と同じ中心角で半径を引き、弧の上にもう1本の半径を補助線として追加
+            fg = pb.get("fig")
+            theta = fg[1] if isinstance(fg, (tuple, list)) and fg and fg[0] == "circle" else 80
+            for sgn in (-1, 1):
+                ang = _m.radians(sgn * theta / 2)
+                ax.plot([0.5, 0.5 + 0.35 * _m.cos(ang)], [0.5, 0.5 + 0.35 * _m.sin(ang)],
+                        linewidth=1.5)
             ax.plot([0.5, 0.5], [0.5, 0.85], linewidth=1.5, linestyle=":", color="red")
-            ax.text(0.52, 0.7, "AUX", fontsize=9, color="red")
         else:  # 三平方: 高さの補助線
             ax.plot([0.15, 0.75, 0.15, 0.15], [0.15, 0.15, 0.65, 0.15], linewidth=2)
             ax.plot([0.15, 0.45], [0.65, 0.15], linewidth=1.5, linestyle=":", color="red")
-            ax.text(0.2, 0.5, "AUX", fontsize=9, color="red")
         fd, path = tempfile.mkstemp(suffix=".png")
         os.close(fd)
         fig.savefig(path, bbox_inches="tight")
@@ -440,14 +491,121 @@ def index():
                            stock_files=sorted(os.listdir(STOCK_DIR)))
 
 
+def _find_app_file(name):
+    for base in (BASE, os.path.dirname(os.path.abspath(__file__))):
+        p = os.path.join(base, name)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+@app.route("/favicon.ico")
+def favicon():
+    p = _find_app_file("math_icon.ico")
+    if p:
+        return send_file(p, mimetype="image/x-icon")
+    return "", 204
+
+
+@app.route("/apple-touch-icon.png")
+def apple_touch_icon():
+    p = _find_app_file("math_icon_180.png")
+    if p:
+        return send_file(p, mimetype="image/png")
+    return "", 204
+
+
 @app.route("/preview", methods=["POST"])
 def preview():
     p = get_params(request.form)
     problems, label = _gen_problems(p)
     p["seed"] = request.form.get("seed", "")
+    # プレビューでも図が見えるようにする (出力前に図の有無・内容を確認できる)
+    for pb in problems:
+        pb["fig_img"] = _problem_fig_datauri(pb, p["unit"])
     return render_template("index.html", units=UNIT_META, ren_patterns=REN_PATTERNS,
                            stock_files=sorted(os.listdir(STOCK_DIR)),
                            preview=True, problems=problems, unit_label=label, **p)
+
+
+def _attach_figures(new_para, pb, p):
+    """問題に自動図 (関数グラフ・単元図・2段階図) を添付する。
+    new_para: 新しい段落を返す callable (セル用・文書用で共通化)。"""
+    # 関数グラフを自動添付 (一次関数・比例・反比例・2次関数)
+    if pb.get("func_a") is not None:
+        img = make_graph_image(pb["func_a"], pb["func_b"], seed=pb["no"])
+        if img:
+            try:
+                new_para().add_run().add_picture(img, width=Inches(1.8))
+            finally:
+                try:
+                    os.remove(img)
+                except OSError:
+                    pass
+    elif pb.get("graph") is not None:
+        g = pb["graph"]
+        img = make_prop_graph(g[0], g[1], g[2] if len(g) > 2 else 0)
+        if img:
+            try:
+                new_para().add_run().add_picture(img, width=Inches(1.8))
+            finally:
+                try:
+                    os.remove(img)
+                except OSError:
+                    pass
+    # 単元図 (円・相似・箱ひげ図・三平方) を自動添付 + 2段階図 (補助線の前後)
+    if pb.get("func_a") is None:
+        fig = make_unit_figure(p["unit"], pb)
+        if fig:
+            try:
+                pr = new_para()
+                set_run_font(pr.add_run("【図1: 問題の図】"), font_size=9, is_bold=True)
+                pr = new_para()
+                pr.add_run().add_picture(fig, width=Inches(2.0))
+                fig2 = make_unit_figure_step2(p["unit"], pb)
+                if fig2:
+                    try:
+                        pr2 = new_para()
+                        set_run_font(pr2.add_run("【図2: 補助線を引いた後(板書用)】"), font_size=9,
+                                     is_bold=True, color=RGBColor(0xC5, 0x30, 0x30))
+                        pr3 = new_para()
+                        pr3.add_run().add_picture(fig2, width=Inches(2.0))
+                    finally:
+                        try:
+                            os.remove(fig2)
+                        except OSError:
+                            pass
+            finally:
+                try:
+                    os.remove(fig)
+                except OSError:
+                    pass
+
+
+def _problem_fig_datauri(pb, unit):
+    """プレビュー表示用に、問題の自動図を data URI で返す (無ければ None)。"""
+    import base64 as _b64
+    path = None
+    try:
+        if pb.get("func_a") is not None:
+            path = make_graph_image(pb["func_a"], pb["func_b"], seed=pb["no"])
+        elif pb.get("graph") is not None:
+            g = pb["graph"]
+            path = make_prop_graph(g[0], g[1], g[2] if len(g) > 2 else 0)
+        else:
+            path = make_unit_figure(unit, pb)
+        if path and os.path.isfile(path):
+            with open(path, "rb") as fh:
+                return "data:image/png;base64," + _b64.b64encode(fh.read()).decode()
+    except Exception:
+        return None
+    finally:
+        if path:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    return None
 
 
 def _write_question_cell(cell_q, pb, p, font_size_q):
@@ -475,57 +633,7 @@ def _write_question_cell(cell_q, pb, p, font_size_q):
             if i > 0:
                 pq.add_run().add_break()
             set_run_font(pq.add_run(line), font_size=font_size_q)
-    # 関数グラフを自動添付 (一次関数・比例・反比例・2次関数)
-    if pb.get("func_a") is not None:
-        img = make_graph_image(pb["func_a"], pb["func_b"], seed=pb["no"])
-        if img:
-            try:
-                pr = cell_q.add_paragraph()
-                pr.add_run().add_picture(img, width=Inches(1.8))
-            finally:
-                try:
-                    os.remove(img)
-                except OSError:
-                    pass
-    elif pb.get("graph") is not None:
-        g = pb["graph"]
-        img = make_prop_graph(g[0], g[1], g[2] if len(g) > 2 else 0)
-        if img:
-            try:
-                pr = cell_q.add_paragraph()
-                pr.add_run().add_picture(img, width=Inches(1.8))
-            finally:
-                try:
-                    os.remove(img)
-                except OSError:
-                    pass
-    # 単元図 (円・相似・箱ひげ図・三平方) を自動添付 + 2段階図 (補助線の前後)
-    if pb.get("func_a") is None:
-        fig = make_unit_figure(p["unit"], pb)
-        if fig:
-            try:
-                pr = cell_q.add_paragraph()
-                set_run_font(pr.add_run("【図1: 問題の図】"), font_size=9, is_bold=True)
-                pr = cell_q.add_paragraph()
-                pr.add_run().add_picture(fig, width=Inches(2.0))
-                fig2 = make_unit_figure_step2(p["unit"], pb)
-                if fig2:
-                    try:
-                        pr2 = cell_q.add_paragraph()
-                        set_run_font(pr2.add_run("【図2: 補助線を引いた後(板書用)】"), font_size=9,
-                                     is_bold=True, color=RGBColor(0xC5, 0x30, 0x30))
-                        pr3 = cell_q.add_paragraph()
-                        pr3.add_run().add_picture(fig2, width=Inches(2.0))
-                    finally:
-                        try:
-                            os.remove(fig2)
-                        except OSError:
-                            pass
-            finally:
-                try:
-                    os.remove(fig)
-                except OSError:
-                    pass
+    _attach_figures(cell_q.add_paragraph, pb, p)
     if p["support_tag"] in ("calc_step", "visual", "draw_space", "proof_fill") and pb.get("hint"):
         p_hint = cell_q.add_paragraph()
         set_run_font(p_hint.add_run("※ " + pb["hint"]), font_size=8.5, is_italic=True,
@@ -555,6 +663,14 @@ def _write_answer_cell(cell_a, pb, p):
         set_run_font(pp.add_run("＿＿＿＿＿＿＿＿＿＿"), font_size=8,
                      color=RGBColor(0xA0, 0xAE, 0xC0))
     shade_cell(cell_a, "F8F9FA")
+
+
+def _usable_width_in(p):
+    """用紙・向き・余白から、表に使える幅 (インチ) を求める。"""
+    w_mm, h_mm = PAPER_SIZES.get(p.get("paper", "A4"), PAPER_SIZES["A4"])
+    width_mm = h_mm if p.get("orient") == "landscape" else w_mm
+    m_in = {"narrow": 0.4, "std": 0.6, "wide": 0.9}.get(p.get("margin", "std"), 0.6)
+    return max(3.0, width_mm / 25.4 - 2 * m_in)
 
 
 def build_docx(p, problems, unit_label):
@@ -601,6 +717,8 @@ def build_docx(p, problems, unit_label):
                 add_system_equations(pp, pb["eq1"], pb["eq2"])
             else:
                 set_run_font(pp.add_run(pb["q"].replace("\n", "　") + "  答【　　　　】"), font_size=font_size_q)
+            # パターンAでも図が付くように (従来は図なしだった)
+            _attach_figures(doc.add_paragraph, pb, p)
             if p["support_tag"] != "none" and pb.get("hint"):
                 ph = doc.add_paragraph()
                 set_run_font(ph.add_run("※ " + pb["hint"]), font_size=9, is_italic=True)
@@ -609,6 +727,9 @@ def build_docx(p, problems, unit_label):
         table = doc.add_table(rows=1, cols=3)
         table.style = "Table Grid"
         table.autofit = False
+        _uw3 = _usable_width_in(p)
+        for _ci, _r3 in enumerate((0.40, 0.40, 0.20)):
+            table.columns[_ci].width = Inches(_uw3 * _r3)
         hdr = table.rows[0].cells
         for cell, txt in zip(hdr, ["問題(左)", "問題(右)", "解答欄(右端集約)"]):
             cell.text = ""
@@ -643,11 +764,12 @@ def build_docx(p, problems, unit_label):
         set_run_font(hdr_q.paragraphs[0].add_run("問題"), font_size=11, is_bold=True)
         set_run_font(hdr_a.paragraphs[0].add_run("解答欄・途中式"), font_size=11, is_bold=True)
         shade_cell(hdr_q, "E2E8F0"); shade_cell(hdr_a, "E2E8F0")
-        # 解答欄幅の調整
-        _aw = {"narrow": (4.7, 2.1), "std": (4.2, 2.6), "wide": (3.5, 3.3)}.get(
-            p.get("ans_width", "std"), (4.2, 2.6))
-        table.columns[0].width = Inches(_aw[0])
-        table.columns[1].width = Inches(_aw[1])
+        # 解答欄幅の調整 (比率を用紙の可用幅に掛ける: B5など小さい用紙でもはみ出さない)
+        _ratio = {"narrow": (0.69, 0.31), "std": (0.62, 0.38), "wide": (0.51, 0.49)}.get(
+            p.get("ans_width", "std"), (0.62, 0.38))
+        _uw = _usable_width_in(p)
+        table.columns[0].width = Inches(_uw * _ratio[0])
+        table.columns[1].width = Inches(_uw * _ratio[1])
         for pb in problems:
             row = table.add_row().cells
             _write_question_cell(row[0], pb, p, font_size_q)
@@ -814,13 +936,17 @@ border-radius:6px;padding:10px 18px;font-weight:bold;cursor:pointer;margin-top:8
 def history():
     from smart_tools import db_search
     q = request.args.get("q", "")
+
+    def e(v):
+        return _html.escape(str(v), quote=True)
+
     recs = db_search(keyword=q)
     rows = "".join(
-        f"<tr><td>{r.get('time','')}</td><td>{r.get('unit_label','')}<br>{r.get('test_name','')}"
-        f" {r.get('variant','A')}・{r.get('difficulty','')}</td>"
-        f"<td>seed={r.get('seed','')}</td></tr>" for r in recs[:50])
+        f"<tr><td>{e(r.get('time',''))}</td><td>{e(r.get('unit_label',''))}<br>{e(r.get('test_name',''))}"
+        f" {e(r.get('variant','A'))}・{e(r.get('difficulty',''))}</td>"
+        f"<td>seed={e(r.get('seed',''))}</td></tr>" for r in recs[:50])
     return (PAGE_HEAD.format(t="問題DB・履歴検索") +
-            f"<form method='get'>検索 <input name='q' value='{q}'>"
+            f"<form method='get'>検索 <input name='q' value='{e(q)}'>"
             "<button class='btn'>検索</button></form>"
             f"<p>{len(recs)}件</p><table><tr><th>日時</th><th>内容</th><th>再現キー</th></tr>{rows}</table>"
             "<p>再生成はトップ画面で同じ単元・seedを入力してください。</p></div></body></html>")
@@ -899,7 +1025,7 @@ def textbook():
     rows = "".join(f"<tr><td>{r['pub']}</td><td>中{r['grade']}</td><td>p.{r['pages']}</td>"
                     f"<td>{UNIT_META.get(r['unit'], {}).get('label', r['unit'])}</td></tr>" for r in recs)
     return (PAGE_HEAD.format(t="教科書ページ対応") +
-            f"<form method='get'>出版社・学年・ページで検索 <input name='q' value='{q}'>"
+            f"<form method='get'>出版社・学年・ページで検索 <input name='q' value='{_html.escape(q, quote=True)}'>"
             "<button class='btn'>検索</button></form>"
             f"<table><tr><th>出版社</th><th>学年</th><th>ページ</th><th>単元</th></tr>{rows}</table>"
             "</div></body></html>")
@@ -915,7 +1041,8 @@ def tablet():
     problems = apply_edits(problems, request.form)
     cards = "".join(
         f"<div style='border:1px solid #cbd5e0;border-radius:8px;padding:12px;margin:10px 0;font-size:18px'>"
-        f"<b>問{pb['no']}</b><br>{pb['q'].replace(chr(10), '<br>')}</div>" for pb in problems)
+        f"<b>問{pb['no']}</b><br>{_html.escape(pb['q']).replace(chr(10), '<br>')}</div>"
+        for pb in problems)
     qr = ""
     try:
         import qrcode, socket
