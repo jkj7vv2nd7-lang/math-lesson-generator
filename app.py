@@ -1303,8 +1303,17 @@ if __name__ == "__main__":
     print(" ブラウザ: http://127.0.0.1:5000")
     print(" 終了は Ctrl+C (EXEはウィンドウを閉じる)")
     print("--------------------------------------------------")
-    if getattr(sys, "frozen", False):
-        import threading
-        import webbrowser
-        threading.Timer(1.2, lambda: webbrowser.open("http://127.0.0.1:5000")).start()
+    # 起動したらブラウザを自動で開く（EXE版・通常起動共通）。
+    # ブラウザが開けない環境でもアプリ自体は止まらないよう、失敗は無視する。
+    def _open_browser():
+        try:
+            import webbrowser
+            webbrowser.open("http://127.0.0.1:5000")
+        except Exception:
+            pass
+
+    import threading
+    _timer = threading.Timer(1.5, _open_browser)
+    _timer.daemon = True
+    _timer.start()
     app.run(host="127.0.0.1", port=5000, debug=False)
