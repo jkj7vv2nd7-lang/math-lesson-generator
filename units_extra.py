@@ -1,5 +1,25 @@
 """追加単元生成器: 図形・データ・関数系の全単元カバー用."""
 import random
+from fractions import Fraction
+
+
+def _exact(fr):
+    """Fraction を正確な表示文字列にする (丸めない)。整数→整数、有限小数→小数、それ以外→分数。"""
+    fr = Fraction(fr)
+    if fr.denominator == 1:
+        return str(fr.numerator)
+    v = float(fr)
+    for digits in (1, 2, 3):
+        if round(v, digits) == v:
+            return f"{v:.{digits}f}".rstrip("0").rstrip(".")
+    return f"{fr.numerator}/{fr.denominator}"
+
+
+def _median(sorted_vals):
+    n = len(sorted_vals)
+    if n % 2 == 1:
+        return Fraction(sorted_vals[n // 2])
+    return Fraction(sorted_vals[n // 2 - 1] + sorted_vals[n // 2], 2)
 
 
 def gen_heimen(count, difficulty, rng, topic=None, **kw):
@@ -10,7 +30,7 @@ def gen_heimen(count, difficulty, rng, topic=None, **kw):
             r = rng.randint(3, 9); a = rng.choice([30, 45, 60, 90, 120])
             out.append({"no": i+1, "q": f"半径 {r}cm、中心角 {a}°のおうぎ形の弧の長さと面積を求めよ。下の図も確認しよう。",
                         "hint": "弧=2πr×a/360、面積=πr²×a/360。",
-                        "answer": f"弧 {2*r*a/360:.1f}πcm、面積 {r*r*a/360:.1f}πcm²",
+                        "answer": f"弧 {_exact(Fraction(2 * r * a, 360))}πcm、面積 {_exact(Fraction(r * r * a, 360))}πcm²",
                         "explanation": f"弧=2π×{r}×{a}/360、面積=π×{r}²×{a}/360。",
                         "steps": [f"弧=2π×{r}×{a}/360", f"面積=π×{r}²×{a}/360"], "kind": "おうぎ形",
                         "fig": ("sector", r, a)})
@@ -38,7 +58,7 @@ def gen_kukan(count, difficulty, rng, topic=None, **kw):
             a = rng.randint(3, 6); h = rng.randint(4, 10)
             out.append({"no": i+1, "q": f"底面積 {a*a}cm²、高さ {h}cmの角錐の体積を求めよ。下の図も確認しよう。",
                         "hint": "錐体=柱体×1/3。",
-                        "answer": f"{a*a*h/3:.1f}cm³",
+                        "answer": f"{_exact(Fraction(a * a * h, 3))}cm³",
                         "explanation": f"{a*a}×{h}÷3。",
                         "steps": [f"{a*a}×{h}÷3"], "kind": "錐体の体積",
                         "fig": ("pyramid", a, h)})
@@ -46,7 +66,7 @@ def gen_kukan(count, difficulty, rng, topic=None, **kw):
             r = rng.choice([3, 4, 5, 6])
             out.append({"no": i+1, "q": f"半径 {r}cmの球の体積と表面積を求めよ。下の図も確認しよう。",
                         "hint": "体積=4/3πr³、表面積=4πr²。",
-                        "answer": f"体積 {4*r**3/3:.1f}πcm³、表面積 {4*r*r}πcm²",
+                        "answer": f"体積 {_exact(Fraction(4 * r ** 3, 3))}πcm³、表面積 {4*r*r}πcm²",
                         "explanation": f"体積=4/3π×{r}³、表面積=4π×{r}²。",
                         "steps": [f"体積=4/3π×{r}³", f"表面積=4π×{r}²"], "kind": "球",
                         "fig": ("sphere", r, 0)})
@@ -70,11 +90,15 @@ def gen_data1(count, difficulty, rng, topic=None, **kw):
             vals = sorted(rng.randint(10, 30) for _ in range(n))
             mean = sum(vals) / n
             s = "、".join(map(str, vals))
+            from collections import Counter
+            cnt = Counter(vals)
+            top = max(cnt.values())
+            mode = "、".join(str(v) for v in sorted(cnt) if cnt[v] == top) if top > 1 else "なし"
             out.append({"no": i+1, "q": f"データ {s} の平均値・中央値・最頻値を求めよ(最頻値はなければ「なし」)。",
-                        "hint": "平均=合計÷個数、中央値=真ん中。",
-                        "answer": f"平均 {mean:.1f}、中央値 {vals[n//2]}",
-                        "explanation": f"合計{sum(vals)}÷{n}={mean:.1f}、中央{vals[n//2]}。",
-                        "steps": [f"合計{sum(vals)}÷{n}", f"中央{vals[n//2]}"], "kind": "代表値"})
+                        "hint": "平均=合計÷個数、中央値=真ん中、最頻値=最も多く出る値。",
+                        "answer": f"平均 {mean:.1f}、中央値 {vals[n//2]}、最頻値 {mode}",
+                        "explanation": f"合計{sum(vals)}÷{n}={mean:.1f}、中央{vals[n//2]}、最頻{mode}。",
+                        "steps": [f"合計{sum(vals)}÷{n}", f"中央{vals[n//2]}", f"最頻{mode}"], "kind": "代表値"})
         elif "相対" in t:
             d = rng.randint(20, 40); tot = rng.choice([50, 100])
             out.append({"no": i+1, "q": f"全度数 {tot} のうち階級の度数が {d} のとき相対度数を求めよ。",
@@ -95,12 +119,18 @@ def gen_hako(count, difficulty, rng, topic=None, **kw):
     out = []
     for i in range(count):
         vals = sorted(rng.sample(range(10, 60), 9))
-        q1, med, q3 = vals[2], vals[4], vals[6]
+        # 教科書方式: 中央値で上下に分け、下位・上位グループそれぞれの中央値が Q1・Q3
+        med = _median(vals)
+        q1 = _median(vals[:len(vals) // 2])
+        q3 = _median(vals[len(vals) // 2 + 1:])
+        rng_ = q3 - q1
+        five = [vals[0], q1, med, q3, vals[-1]]
         out.append({"no": i+1, "q": f"データ {vals} の最小値・第1四分位数・中央値・第3四分位数・最大値を求め、箱ひげ図の要点を書け。",
-                    "hint": "小さい方から1/4・1/2・3/4の位置。四分位範囲=Q3-Q1。",
-                    "answer": f"最小{vals[0]}、Q1{q1}、中央{med}、Q3{q3}、最大{vals[-1]}、範囲{q3-q1}",
-                    "explanation": f"Q1={q1}、中央={med}、Q3={q3}、範囲={q3-q1}。",
-                    "steps": [f"Q1={q1}", f"中央={med}", f"Q3={q3}"], "kind": "箱ひげ図"})
+                    "hint": "中央値で上下半分に分け、それぞれの中央値がQ1・Q3。四分位範囲=Q3-Q1。",
+                    "answer": f"最小{vals[0]}、Q1{_exact(q1)}、中央{_exact(med)}、Q3{_exact(q3)}、最大{vals[-1]}、範囲{_exact(rng_)}",
+                    "explanation": f"Q1={_exact(q1)}、中央={_exact(med)}、Q3={_exact(q3)}、範囲={_exact(rng_)}。",
+                    "steps": [f"Q1={_exact(q1)}", f"中央={_exact(med)}", f"Q3={_exact(q3)}"], "kind": "箱ひげ図",
+                    "vals": vals, "five": [float(x) if isinstance(x, Fraction) else x for x in five]})
     return out
 
 
@@ -234,7 +264,8 @@ def gen_en(count, difficulty, rng, topic=None, **kw):
                     "hint": "円周角=中心角÷2。",
                     "answer": f"円周角 {c}°、中心角 {c*2}°",
                     "explanation": f"{c*2}÷2={c}。",
-                    "steps": [f"{c*2}÷2={c}"], "kind": "円周角"})
+                    "steps": [f"{c*2}÷2={c}"], "kind": "円周角",
+                    "fig": ("circle", c * 2)})
     return out
 
 

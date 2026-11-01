@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="/favicon.ico">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <title>数学教材ジェネレーター</title>
 <style>
 :root { --navy:#1a365d; --blue:#3182ce; --bg:#eef2f6; --line:#cbd5e0; }
@@ -289,7 +291,8 @@ select, input[type=text], input[type=number] { width:100%; padding:8px; border:1
     {% for p in problems %}
     <div class="qcard">
       <div class="qq"><span class="qno">問{{ p.no }}</span> <span class="meta">{{ p.kind or '' }}</span><br>
-        <textarea name="q_{{ p.no }}" rows="4">{{ p.q }}</textarea></div>
+        <textarea name="q_{{ p.no }}" rows="4">{{ p.q }}</textarea>
+        {% if p.fig_img %}<br><img src="{{ p.fig_img }}" alt="問題の図" style="max-width:220px;border:1px solid #cbd5e0;border-radius:6px">{% endif %}</div>
       <div class="qa">
         <textarea name="hint_{{ p.no }}" rows="2">{{ p.hint }}</textarea><br>
         <input name="ans_{{ p.no }}" value="{{ p.answer }}"><br>

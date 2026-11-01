@@ -1,6 +1,19 @@
 """問題生成ロジック v3: 全単元対応 + 連立方程式パターン別 + 途中式ステップ生成."""
 import random
+from fractions import Fraction
 from math import gcd
+
+
+def _exact(fr):
+    """Fraction を正確な表示文字列にする (丸めない)。整数→整数、有限小数→小数、それ以外→分数。"""
+    fr = Fraction(fr)
+    if fr.denominator == 1:
+        return str(fr.numerator)
+    v = float(fr)
+    for digits in (1, 2, 3):
+        if round(v, digits) == v:
+            return f"{v:.{digits}f}".rstrip("0").rstrip(".")
+    return f"{fr.numerator}/{fr.denominator}"
 
 
 def _fmt_term(coef, var, first):
@@ -90,6 +103,9 @@ def gen_renritsu(count, difficulty, rng, ren_pattern="mix", **kw):
             b = rng.randint(1, 4) * rng.choice([1, -1])
             a1, a2 = rng.randint(1, 4), rng.randint(1, 4)
             b1, b2 = (b, b) if rng.random() < 0.5 else (b, -b)
+            # 2式が一致して解が一意に定まらないケースを排除する
+            while a1 == a2 and b1 == b2:
+                a2 = rng.randint(1, 4)
             c1, c2 = a1 * x0 + b1 * y0, a2 * x0 + b2 * y0
             eq1, eq2 = f"{_linear_expr(a1,b1)} = {c1}", f"{_linear_expr(a2,b2)} = {c2}"
             hint = "係数がそろっている! ①±②で1文字消去 (加減法)。"
@@ -102,6 +118,9 @@ def gen_renritsu(count, difficulty, rng, ren_pattern="mix", **kw):
             # ②: y = ax + b, ①: 一般式 (解が x0,y0 になるよう c を逆算。y0 = a*x0+b になる必要あり)
             y0 = a * x0 + b
             a1, b1 = rng.randint(1, 5), rng.randint(1, 5) * rng.choice([1, -1])
+            # ①が②と同一直線になると解が一意に定まらないため排除 (行列式 a1 + a*b1 != 0)
+            while a1 + a * b1 == 0:
+                a1, b1 = rng.randint(1, 5), rng.randint(1, 5) * rng.choice([1, -1])
             c1 = a1 * x0 + b1 * y0
             eq1 = f"{_linear_expr(a1,b1)} = {c1}"
             eq2 = f"y = {_linear_expr(a, b, 'x', '')}".replace("  ", " ").strip()
@@ -113,12 +132,21 @@ def gen_renritsu(count, difficulty, rng, ren_pattern="mix", **kw):
             c2 = None
             a2, b2, c2 = None, None, None
         elif pat == "kakko":
-            a1, b1, a2, b2 = _independent_coeffs(rng, 1, 4)
+            # かっこを展開すると本当にその式になる形で組み立てる:
+            # k(x + m y) + n x = (k+n) x + (k m) y
+            k = rng.randint(2, 3)
+            m = rng.choice([-3, -2, -1, 1, 2, 3])
+            n = rng.randint(0, 3)
+            a1, b1 = k + n, k * m
+            while True:
+                a2 = rng.randint(1, 4) * rng.choice([1, -1])
+                b2 = rng.randint(1, 4) * rng.choice([1, -1])
+                if a1 * b2 - a2 * b1 != 0:
+                    break
             c1, c2 = a1 * x0 + b1 * y0, a2 * x0 + b2 * y0
-            k1, k2 = rng.randint(2, 3), rng.randint(2, 3)
-            eq1 = f"{k1}(x {'+' if b1>=0 else '-'} {abs(b1)}y) + {a1 - k1}x = {c1}".replace("+ -", "- ")
-            # 簡易表示: かっこを外す前の形を提示 (整理すると整数係数になる)
-            eq1 = f"{k1}(x {b1:+d}y) …を整理すると {_linear_expr(a1,b1)} = {c1}".replace("+ -", "- ")
+            yterm = "y" if abs(m) == 1 else f"{abs(m)}y"
+            inner = f"x {'+' if m > 0 else '-'} {yterm}"
+            eq1 = f"{k}({inner})" + (f" + {n}x" if n > 0 else "") + f" = {c1}"
             eq2 = f"{_linear_expr(a2,b2)} = {c2}"
             hint = "まずかっこを外して整理! 分配法則→同類項まとめ。"
             steps = [f"①のかっこを外す: {_linear_expr(a1,b1)} = {c1}", f"②: {eq2}"] + \
@@ -131,19 +159,27 @@ def gen_renritsu(count, difficulty, rng, ren_pattern="mix", **kw):
             eq2 = f"{_linear_expr(a2,b2)} = {c2}"
             hint = "小数は×10で整数に! ①の両辺を10倍しよう。"
             steps = [f"①: {eq1}", f"②: {eq2}", f"①×10 → {_linear_expr(a1,b1)} = {c1} …③"] + \
-                _steps_kagen(a1, b1, c1, a2, b2, c2, x0, y0)[2:]
+                [s.replace("①", "③") for s in _steps_kagen(a1, b1, c1, a2, b2, c2, x0, y0)[2:]]
             kind = "小数"
         elif pat == "bunsu":
-            a1, b1, a2, b2 = _independent_coeffs(rng, 1, 4)
-            c1, c2 = a1 * x0 + b1 * y0, a2 * x0 + b2 * y0
+            # もとの分数式をそのまま提示する。両辺×(d1*d2) で d2 x + d1 y = c_int になるよう構成
             d1, d2 = rng.choice([2, 3]), rng.choice([2, 3])
-            eq1 = f"x/{d1} + y/{d2} = {c1}/{d1 * d2} の形を整数化 (分母×{d1*d2})"
-            eq1_disp = f"(x/{d1} + y/{d2})×{d1*d2} → {_linear_expr(a1,b1)} = {c1}"
+            a1, b1 = d2, d1
+            L = d1 * d2
+            c1 = a1 * x0 + b1 * y0
+            while True:
+                a2 = rng.randint(1, 4) * rng.choice([1, -1])
+                b2 = rng.randint(1, 4) * rng.choice([1, -1])
+                if a1 * b2 - a2 * b1 != 0:
+                    break
+            c2 = a2 * x0 + b2 * y0
+            g = gcd(abs(c1), L)
+            rhs = f"{c1 // g}/{L // g}" if L // g != 1 else f"{c1 // g}"
+            eq1 = f"x/{d1} + y/{d2} = {rhs}"
             eq2 = f"{_linear_expr(a2,b2)} = {c2}"
-            hint = f"分数は分母の公倍数({d1*d2})をかけて払おう!"
-            steps = [f"①の両辺×{d1*d2} → {_linear_expr(a1,b1)} = {c1} …③", f"②: {eq2}"] + \
-                _steps_kagen(a1, b1, c1, a2, b2, c2, x0, y0)[2:]
-            eq1 = eq1_disp
+            hint = f"分数は分母の公倍数({L})をかけて払おう!"
+            steps = [f"①の両辺×{L} → {_linear_expr(a1,b1)} = {c1} …③", f"②: {eq2}"] + \
+                [s.replace("①", "③") for s in _steps_kagen(a1, b1, c1, a2, b2, c2, x0, y0)[2:]]
             kind = "分数"
         else:  # kagen_standard (+exam は係数を大型化)
             lo, hi = (3, 9) if difficulty == "exam" else (1, 6)
@@ -173,11 +209,12 @@ def gen_niji(count, difficulty, rng, **kw):
         s, pr = -(p + q), p * q
         left = "x²" + _fmt_term(s, "x", False) + _fmt_term(pr, "", False)
         qtext = f"{left.strip()} = 0"
-        steps = [f"x²{s:+d}x{pr:+d} = 0".replace("+ -", "- "),
+        ans = f"x = {p} (重解)" if p == q else f"x = {p}, {q}"
+        steps = [qtext,
                  f"(x {-p:+d})(x {-q:+d}) = 0".replace("+ -", "- "),
-                 f"x = {p}, {q}"]
+                 ans]
         problems.append({"no": i + 1, "q": qtext, "hint": "因数分解! (x+□)(x+□)を探そう。",
-                         "answer": f"x = {p}, {q}", "explanation": " / ".join(steps),
+                         "answer": ans, "explanation": " / ".join(steps),
                          "steps": steps, "kind": "因数分解"})
     return problems
 
@@ -251,11 +288,171 @@ def gen_ichiji(count, difficulty, rng, **kw):
         a = rng.randint(2, 9) * rng.choice([1, -1])
         b = rng.randint(-9, 9)
         c = a * x0 + b
-        q = f"{a}x {'+' if b >= 0 else '-'} {abs(b)} = {c}".replace("+ -", "- ")
-        steps = [f"{a}x = {c} {'-' if b >= 0 else '+'} {abs(b)} (移項: 符号が変わる)", f"{a}x = {c - b}", f"x = {x0}"]
+        if b == 0:
+            q = f"{a}x = {c}"
+            steps = [f"両辺を{a}でわる", f"x = {x0}"]
+        else:
+            q = f"{a}x {'+' if b >= 0 else '-'} {abs(b)} = {c}".replace("+ -", "- ")
+            steps = [f"{a}x = {c} {'-' if b >= 0 else '+'} {abs(b)} (移項: 符号が変わる)", f"{a}x = {c - b}", f"x = {x0}"]
         problems.append({"no": i + 1, "q": q, "hint": "等号をまたぐと符号が変わる! 移項→両辺÷係数。",
                          "answer": f"x = {x0}", "explanation": " / ".join(steps),
                          "steps": steps, "kind": "1次方程式", "eq1": q, "eq2": ""})
+    return problems
+
+
+def _paren(n):
+    """負の数を教科書式に (…) で囲む。正の数はそのまま。"""
+    return f"({n})" if n < 0 else f"{n}"
+
+
+def gen_seifu(count, difficulty, rng, **kw):
+    """中1 正の数・負の数: 符号つき整数の四則 (負の数を実際に含む)。"""
+    problems = []
+    hi = 9 if difficulty == "basic" else 12
+
+    def nz(lo, hi_):
+        v = 0
+        while v == 0:
+            v = rng.randint(lo, hi_)
+        return v
+
+    kinds = ["add", "sub", "mul", "div"]
+    for i in range(count):
+        kind = kinds[i % len(kinds)] if difficulty == "basic" else rng.choice(kinds + ["mix"])
+        if kind == "add":
+            a, b = nz(-hi, hi), nz(-hi, hi)
+            ans = a + b
+            q = f"{_paren(a)} + {_paren(b)} ="
+            st = ["符号と絶対値を確認", f"{_paren(a)} + {_paren(b)} = {ans}"]
+        elif kind == "sub":
+            a, b = nz(-hi, hi), nz(-hi, hi)
+            ans = a - b
+            q = f"{_paren(a)} - {_paren(b)} ="
+            st = ["ひく数の符号を変えて加法になおす", f"{_paren(a)} + {_paren(-b)} = {ans}"]
+        elif kind == "mul":
+            a, b = nz(-9, 9), nz(-9, 9)
+            ans = a * b
+            q = f"{_paren(a)} × {_paren(b)} ="
+            st = [f"符号: {'同符号→正' if (a > 0) == (b > 0) else '異符号→負'}",
+                  f"{_paren(a)} × {_paren(b)} = {ans}"]
+        elif kind == "div":
+            b = nz(-9, 9)
+            ans = nz(-9, 9)
+            a = b * ans
+            q = f"{_paren(a)} ÷ {_paren(b)} ="
+            st = [f"符号: {'同符号→正' if (a > 0) == (b > 0) else '異符号→負'}",
+                  f"{_paren(a)} ÷ {_paren(b)} = {ans}"]
+        else:  # mix
+            a, b, cc = nz(-6, 6), nz(-6, 6), nz(-6, 6)
+            ans = (a + b) * cc
+            q = f"({_paren(a)} + {_paren(b)}) × {_paren(cc)} ="
+            st = [f"かっこの中: {_paren(a)} + {_paren(b)} = {a + b}",
+                  f"{_paren(a + b)} × {_paren(cc)} = {ans}"]
+        problems.append({"no": i + 1, "q": q, "hint": "符号の決まりを確認! 同符号・異符号で符号が決まる。",
+                         "answer": f"{ans}", "explanation": " / ".join(st), "steps": st,
+                         "kind": "正負の数"})
+    return problems
+
+
+def gen_mojishiki(count, difficulty, rng, **kw):
+    """中1 文字の式: 同類項・式の値・分配法則・数量の表し方。"""
+    problems = []
+    kinds = ["doruikei", "atai", "bunpai", "hyogen"]
+    for i in range(count):
+        kind = kinds[i % len(kinds)] if difficulty == "basic" else rng.choice(kinds)
+        if kind == "doruikei":
+            a = rng.randint(-9, 9) or 3
+            b = rng.randint(-9, 9) or 2
+            if a + b == 0:
+                b += 1
+            q = f"{_fmt_term(a, 'x', True)}{_fmt_term(b, 'x', False)} を計算せよ。".strip()
+            ans = _fmt_term(a + b, "x", True).strip()
+            st = [f"同類項どうし: {a} + ({b}) = {a + b}", ans]
+        elif kind == "atai":
+            a = rng.randint(-6, 6) or 2
+            b = rng.randint(-9, 9)
+            v = rng.randint(-5, 5)
+            expr = _linear_expr(a, b, "x", "")
+            q = f"x = {v} のとき、{expr} の値を求めよ。"
+            ans = f"{a * v + b}"
+            st = [f"{expr} に x = {v} を代入する", f"= {ans}"]
+        elif kind == "bunpai":
+            a = rng.choice([2, 3, 4, 5, -2, -3])
+            b = rng.randint(-6, 6) or 3
+            q = f"{a}(x {'+' if b >= 0 else '-'} {abs(b)}) を展開せよ。"
+            ans = _linear_expr(a, a * b, "x", "")
+            st = [f"{a} を各項にかける", ans]
+        else:  # hyogen
+            p = rng.randint(2, 9)
+            which = rng.choice([0, 1, 2])
+            if which == 0:
+                q = f"1本 {p} 円のペンを x 本買ったときの代金を、文字式で表せ。"
+                ans = f"{p}x 円"
+            elif which == 1:
+                q = f"x km の道のりを時速 {p} km で歩くときにかかる時間を、文字式で表せ。"
+                ans = f"x/{p} 時間"
+            else:
+                q = f"1個 {p} g の品物 x 個分の重さを、文字式で表せ。"
+                ans = f"{p}x g"
+            st = ["数量の関係を文字で表す", ans]
+        problems.append({"no": i + 1, "q": q, "hint": "文字は数の代わり。同類項は係数どうしを計算!",
+                         "answer": ans, "explanation": " / ".join(st), "steps": st, "kind": "文字式"})
+    return problems
+
+
+_SUP = {0: "", 1: "", 2: "²", 3: "³", 4: "⁴"}
+
+
+def _mono(coef, power):
+    """単項式の表示: (係数, xの指数) -> '3x²' など。"""
+    if coef == 0:
+        return "0"
+    var = "x" + _SUP.get(power, f"^{power}") if power > 0 else ""
+    if not var:
+        return f"{coef}"
+    if coef == 1:
+        return var
+    if coef == -1:
+        return f"-{var}"
+    return f"{coef}{var}"
+
+
+def gen_shiki_keisan(count, difficulty, rng, **kw):
+    """中2 式と計算: 多項式の加減・単項式の乗除。"""
+    problems = []
+    kinds = ["kagen", "genpo", "joho", "jojo"]
+    for i in range(count):
+        kind = kinds[i % len(kinds)] if difficulty == "basic" else rng.choice(kinds)
+        if kind in ("kagen", "genpo"):
+            a, b, c2, d = (rng.randint(-6, 6) or 2 for _ in range(4))
+            e1, e2 = _linear_expr(a, b), _linear_expr(c2, d)
+            if kind == "kagen":
+                q = f"({e1}) + ({e2}) を計算せよ。"
+                ans = _linear_expr(a + c2, b + d)
+                st = ["同類項どうしをまとめる", ans]
+            else:
+                q = f"({e1}) - ({e2}) を計算せよ。"
+                ans = _linear_expr(a - c2, b - d)
+                st = ["ひく式の各項の符号を変える", ans]
+        elif kind == "joho":
+            a = rng.choice([2, 3, 4, 5, -2, -3])
+            b = rng.choice([2, 3, 4, -2, -3])
+            m, n = rng.randint(1, 2), rng.randint(1, 2)
+            q = f"{_mono(a, m)} × {_mono(b, n)} を計算せよ。"
+            ans = _mono(a * b, m + n)
+            st = ["係数どうし・文字どうしをかける", ans]
+        else:  # jojo
+            b = rng.choice([2, 3, 4, -2, -3])
+            qq = rng.choice([2, 3, 4, 5, -2, -3])
+            m, n = rng.randint(2, 3), rng.randint(1, 2)
+            if m <= n:
+                m = n + 1
+            q = f"{_mono(b * qq, m)} ÷ {_mono(b, n)} を計算せよ。"
+            ans = _mono(qq, m - n)
+            st = ["係数はわり算、指数は引き算", ans]
+        problems.append({"no": i + 1, "q": q, "hint": "同類項・符号・指数の扱いに注意!",
+                         "answer": ans, "explanation": " / ".join(st), "steps": st,
+                         "kind": "式の計算"})
     return problems
 
 
@@ -298,9 +495,9 @@ from units_extra import (gen_heimen, gen_kukan, gen_data1, gen_hako, gen_kakurit
                           gen_sanpei, gen_hyohon)
 
 UNIT_META = {
-    "中1_正負の数": {"label": "【中1】正の数・負の数", "gen": lambda c, d, r, **k: gen_drill(c, d, r, op="+-", title="正負の数", **k), "area": "数と式",
+    "中1_正負の数": {"label": "【中1】正の数・負の数", "gen": gen_seifu, "area": "数と式",
                       "topics": ["正負の数の意味", "加法・減法", "乗法・除法", "四則混合・利用"]},
-    "中1_文字式": {"label": "【中1】文字の式", "gen": lambda c, d, r, **k: gen_drill(c, d, r, op="×÷", title="文字式", **k), "area": "数と式",
+    "中1_文字式": {"label": "【中1】文字の式", "gen": gen_mojishiki, "area": "数と式",
                    "topics": ["文字式の表し方", "1次式の加減", "数量の表し方"]},
     "中1_方程式": {"label": "【中1】方程式 (1次方程式)", "gen": gen_ichiji, "area": "数と式",
                    "topics": ["等式の性質", "1次方程式の解き方", "文章題・利用"]},
@@ -314,7 +511,7 @@ UNIT_META = {
                      "topics": ["角柱・円柱の体積", "錐体の体積", "球の体積・表面積", "展開図・投影図"]},
     "中1_データ": {"label": "【中1】データの分析と活用", "gen": gen_data1, "area": "データの活用",
                    "topics": ["平均値・中央値・最頻値", "度数分布・ヒストグラム", "相対度数"]},
-    "中2_式と計算": {"label": "【中2】式と計算", "gen": lambda c, d, r, **k: gen_drill(c, d, r, op="+-×", title="式の計算", **k), "area": "数と式",
+    "中2_式と計算": {"label": "【中2】式と計算", "gen": gen_shiki_keisan, "area": "数と式",
                       "topics": ["多項式の加減", "単項式の乗除", "文字式の利用", "等式の変形"]},
     "中2_連立方程式": {"label": "【中2】連立二元一次方程式", "gen": gen_renritsu, "area": "数と式",
                        "topics": ["加減法・基本", "加減法・標準", "代入法", "かっこ付き", "小数", "分数", "文章題・利用"]},
