@@ -665,6 +665,43 @@ def _attach_figures(new_para, pb, p):
                     pass
 
 
+def _auto_fig_paths(pb, unit):
+    """自動図 (関数グラフ・単元図・2段階図) の PNG パス一覧を返す。
+    Word の _attach_figures と同じ規則で、同じ生成関数を使う (出力ごとに作り直さない)。
+    返した一時ファイルは呼び出し側で使用後に削除すること。"""
+    paths = []
+    try:
+        if pb.get("func_a") is not None:
+            img = make_graph_image(pb["func_a"], pb["func_b"], seed=pb["no"])
+            if img:
+                paths.append(img)
+        elif pb.get("graph") is not None:
+            g = pb["graph"]
+            img = make_prop_graph(g[0], g[1], g[2] if len(g) > 2 else 0)
+            if img:
+                paths.append(img)
+        if pb.get("func_a") is None:
+            fig = make_unit_figure(unit, pb)
+            if fig:
+                paths.append(fig)
+                fig2 = make_unit_figure_step2(unit, pb)
+                if fig2:
+                    paths.append(fig2)
+    except Exception:
+        pass
+    return paths
+
+
+def _cleanup_auto_figs(problems):
+    for pb in problems:
+        for fp in pb.get("auto_fig_paths") or []:
+            try:
+                os.remove(fp)
+            except OSError:
+                pass
+        pb["auto_fig_paths"] = []
+
+
 def _problem_fig_datauri(pb, unit):
     """プレビュー表示用に、問題の自動図を data URI で返す (無ければ None)。"""
     import base64 as _b64
@@ -996,8 +1033,13 @@ def generate_pdf():
     problems, label = _gen_problems(p)
     problems = apply_edits(problems, request.form)
     problems = apply_fig_assignments(problems, request.form)
+    for pb in problems:
+        pb["auto_fig_paths"] = _auto_fig_paths(pb, p["unit"])
     title = f"【{p['test_name']}】 {label} ({DIFF_LABEL[p['difficulty']]}・{len(problems)}問)"
-    buf = build_pdf(title, problems, f"{p['fiscal_year']} 年 組 氏名 / 点数")
+    try:
+        buf = build_pdf(title, problems, f"{p['fiscal_year']} 年 組 氏名 / 点数")
+    finally:
+        _cleanup_auto_figs(problems)
     return send_file(buf, as_attachment=True, download_name=f"{p['test_name']}_{p['unit']}.pdf",
                      mimetype="application/pdf")
 
@@ -1011,8 +1053,13 @@ def generate_pptx():
     problems, label = _gen_problems(p)
     problems = apply_edits(problems, request.form)
     problems = apply_fig_assignments(problems, request.form)
+    for pb in problems:
+        pb["auto_fig_paths"] = _auto_fig_paths(pb, p["unit"])
     title = f"【{p['test_name']}】 {label} ({DIFF_LABEL[p['difficulty']]})"
-    buf = build_pptx(title, problems, p["test_name"])
+    try:
+        buf = build_pptx(title, problems, p["test_name"])
+    finally:
+        _cleanup_auto_figs(problems)
     return send_file(buf, as_attachment=True, download_name=f"{p['test_name']}_{p['unit']}.pptx",
                      mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation")
 

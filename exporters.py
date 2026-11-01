@@ -64,6 +64,14 @@ def build_pptx(title, problems, test_name=""):
                                      width=Inches(3.5))
             except Exception:
                 pass
+        # 自動図 (関数グラフ・単元図・2段階図) を左下に横並びで配置
+        for j, fp in enumerate(pb.get("auto_fig_paths") or []):
+            if fp and os.path.isfile(fp):
+                try:
+                    s.shapes.add_picture(fp, Inches(0.5 + 1.95 * j), Inches(5.62),
+                                         width=Inches(1.8))
+                except Exception:
+                    pass
         # ヒント
         ph = s.shapes.add_textbox(Inches(0.5), Inches(4.6), Inches(12.3), Inches(1)).text_frame
         ph.word_wrap = True
@@ -141,6 +149,18 @@ def build_pdf(title, problems, meta_line=""):
         q = esc(pb["q"]).replace("\n", "<br/>")
         story.append(Paragraph(f"問{pb['no']} [{esc(pb.get('kind',''))}]<br/>{q}", st_b))
         story.append(Spacer(1, 2*mm))
+        # 自動図 (関数グラフ・単元図・2段階図) を、その問題の位置に差し込む
+        for fp in pb.get("auto_fig_paths") or []:
+            if fp and os.path.isfile(fp):
+                try:
+                    iw, ih = ImageReader(fp).getSize()
+                    w = 45 * mm
+                    h = w * ih / iw if iw else w
+                    h = min(h, 60 * mm)
+                    story.append(RLImage(fp, width=w, height=h))
+                    story.append(Spacer(1, 2*mm))
+                except Exception:
+                    pass
         # 問題に指定された取り込み図を、その問題の位置に差し込む
         if pb.get("user_fig_path") and os.path.isfile(pb["user_fig_path"]):
             try:
